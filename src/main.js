@@ -1,8 +1,9 @@
 import './style.css';
-import { ACTIONS, INITIAL_STATE, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, trainingTelemetry } from './game.js';
+import { ACTIONS, INITIAL_STATE, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, trainingTelemetry } from './game.js';
 import { getSnapshot } from './api.js';
 
-const STORE = 'squeek-colony-v1';
+const STORE = 'wheelhold-v1';
+const LEGACY_STORE = 'squeek-colony-v1';
 const app = document.querySelector('#app');
 let state = load();
 let telemetry = null;
@@ -13,7 +14,7 @@ let apiReason = null;
 
 function load() {
   try {
-    const stored = JSON.parse(localStorage.getItem(STORE) || '{}');
+    const stored = JSON.parse(localStorage.getItem(STORE) || localStorage.getItem(LEGACY_STORE) || '{}');
     const next = structuredClone(INITIAL_STATE);
     if (stored && typeof stored === 'object') {
       if (Array.isArray(stored.resolvedRounds)) next.resolvedRounds = stored.resolvedRounds.filter(v => /^\d+$/.test(String(v))).slice(-100);
@@ -42,12 +43,14 @@ function hamster() {
 }
 
 function render() {
+  const focused = document.activeElement?.id || document.activeElement?.dataset?.action || null;
   const t = telemetry || trainingTelemetry();
-  const live = mode === 'live';
-  const statusLabel = mode === 'connecting' ? 'CONNECTING' : live ? (t.stale ? 'STALE SIGNAL' : 'LIVE WHEELY9000') : 'TRAINING MODE';
+  const live = mode === 'live' && t.verified;
+  const untrusted = mode === 'live' && !t.verified;
+  const statusLabel = mode === 'connecting' ? 'CONNECTING' : live ? (t.stale ? 'STALE SIGNAL' : 'LIVE WHEELY9000') : untrusted ? `${String(t.provenance).toUpperCase()} DATA — NOT LIVE` : 'TRAINING MODE';
   app.innerHTML = `
     <a class="skip" href="#game">Skip to game</a>
-    <header><a class="brand" href="#" aria-label="Squeek Colony home"><span>SC</span><div>SQUEEK<br><b>COLONY</b></div></a>
+    <header><a class="brand" href="#" aria-label="Wheelhold home"><span>WH</span><div>WHEEL<br><b>HOLD</b></div></a>
       <div class="season">SEASON 01 <i></i> DAY ${Math.max(1, state.history.length + 1)}</div>
       <button class="wallet" id="wallet" aria-label="Connect wallet">CONNECT WALLET <span>↗</span></button>
     </header>
@@ -63,9 +66,9 @@ function render() {
           <div><small>WHEEL STATE</small><strong>${t.spinning ? 'RUNNING' : 'RESTING'}</strong></div>
           <div><small>LIVE SPEED</small><strong>${t.rpm.toFixed(1)} <sup>RPM</sup></strong></div>
           <div><small>SQUEEK BLOCK</small><strong>#${short(t.blockHeight)}</strong></div>
-          <div class="progress"><small>BLOCK PROGRESS</small><strong>${pct(t.blockProgress * 100)}</strong><span><i style="width:${t.blockProgress * 100}%"></i></span></div>
+          <div class="progress"><small>BLOCK PROGRESS</small><strong>${pct(t.blockProgress * 100)}</strong><progress max="100" value="${t.blockProgress * 100}" aria-label="Block progress"></progress></div>
         </div>
-        ${!live ? `<div class="notice"><b>TRAINING SIMULATION</b> — No rewards or live round resolution. ${apiReason ? `Live API: ${apiReason}. ` : ''}Simulated telemetry is never presented as chain data.</div>` : t.stale ? `<div class="notice warning"><b>STALE TELEMETRY</b> — Actions are saved, but resolution is paused until verified data returns.</div>` : ''}
+        ${untrusted ? `<div class="notice warning"><b>UNTRUSTED TELEMETRY</b> — ${String(t.provenance).toUpperCase()} readings cannot lock or resolve a round.</div>` : !live ? `<div class="notice"><b>TRAINING SIMULATION</b> — No rewards or live round resolution. ${apiReason ? `Live API: ${apiReason}. ` : ''}Simulated telemetry is never presented as chain data.</div>` : t.stale ? `<div class="notice warning"><b>STALE TELEMETRY</b> — Actions are saved, but resolution is paused until verified data returns.</div>` : ''}
       </section>
       <section class="dashboard">
         <div class="panel colony">
@@ -88,19 +91,21 @@ function render() {
         ${state.history.length ? state.history.slice(0,4).map(h=>`<article><i>${ACTIONS[h.actionId].icon}</i><div><b>${h.result}</b><small>ROUND ${h.roundId} · ${h.workUnits ?? '—'} WORK · ${h.tier.toUpperCase()} ${h.transactionHash ? `· <a href="https://eth-sepolia.blockscout.com/tx/${h.transactionHash}" target="_blank" rel="noopener">PROOF ↗</a>` : ''}</small></div></article>`).join('') : '<div class="empty">Your colony’s verified story begins with the next settled round.</div>'}
       </section>
     </main>
-    <footer><span>SQUEEK COLONY / GENESIS BUILD</span><span>POWERED BY VERIFIED SQUEEKCHAIN DATA · SEPOLIA</span><a href="https://squeekchain.com" target="_blank">SQUEEKCHAIN ↗</a></footer>`;
+    <footer><span>WHEELHOLD / A SQUEEKCHAIN COLONY</span><span>POWERED BY VERIFIED SQUEEKCHAIN DATA · SEPOLIA</span><a href="https://squeekchain.com" target="_blank" rel="noopener">SQUEEKCHAIN ↗</a></footer>`;
   bind();
+  if (focused) requestAnimationFrame(() => (document.getElementById(focused) || document.querySelector(`[data-action="${CSS.escape(focused)}"]`))?.focus({ preventScroll: true }));
 }
 
-function meter(label, value, color, display=pct(value)) { return `<div class="meter"><div><b>${label}</b><span>${display}</span></div><p><i style="width:${value}%;background:${color}"></i></p></div>`; }
+function meter(label, value, color, display=pct(value)) { const tone = color === '#f4d35e' ? 'yellow' : color === '#48c9a5' ? 'green' : color === '#66a8ff' ? 'blue' : 'red'; return `<div class="meter ${tone}"><div><b>${label}</b><span>${display}</span></div><progress max="100" value="${value}" aria-label="${label}: ${display}"></progress></div>`; }
 
 function bind() {
   document.querySelectorAll('[data-action]').forEach(el => el.onclick = () => { state.pendingAction = el.dataset.action; save(); render(); });
   document.querySelector('#commit').onclick = () => {
     if (!state.pendingAction) return;
     if (mode !== 'live') return toast('Training action saved. Live resolution requires verified telemetry.');
-    if (telemetry.stale || !telemetry.verified) return toast('Resolution paused: telemetry is not fresh and hardware-verified.');
+    if (telemetry.stale || Date.now() >= telemetry.staleAt || !telemetry.verified) return toast('Resolution paused: telemetry is not fresh and hardware-verified.');
     if (!telemetry.roundId) return toast('The current round cannot be verified yet. Try again after the next refresh.');
+    if (state.resolvedRounds.includes(telemetry.roundId)) return toast('That round is already resolved. Waiting for the next verified round.');
     state.pendingRound = telemetry.roundId;
     state.pendingSnapshot = { counterEpoch: telemetry.counterEpoch, cumulativeWorkUnits: telemetry.cumulativeWorkUnits, lockedAt: new Date().toISOString() };
     save(); render();
@@ -123,15 +128,17 @@ function scheduleRefresh(seconds = 15) {
 async function refresh() {
   refreshController?.abort();
   refreshController = new AbortController();
+  const timeout = setTimeout(() => refreshController.abort(), 8000);
   try {
     const raw = await getSnapshot(refreshController.signal);
     const next = normalizeTelemetry(raw.status);
     const core = normalizeCore(raw.core);
     if (!next.available) throw new Error(next.reason);
     if (!core.available) throw new Error(core.reason);
+    if (next.roundId && /^\d+$/.test(core.settledThroughRound) && BigInt(core.settledThroughRound) >= BigInt(next.roundId)) next.roundId = (BigInt(core.settledThroughRound) + 1n).toString();
     telemetry = next; mode = 'live'; apiReason = null;
     if (state.pendingAction && state.pendingRound) {
-      const result = settlementResult(core, state.pendingRound);
+      const result = settlementResult(core, state.pendingRound, confirmedZeroRange(raw.status));
       if (result?.expired) {
         state.pendingAction = null; state.pendingRound = null; state.pendingSnapshot = null; save();
         toast('The settlement proof window was missed. The action was cleared without scoring.');
@@ -141,10 +148,10 @@ async function refresh() {
     }
     scheduleRefresh(15);
   } catch (error) {
-    if (error.name === 'AbortError') return;
     telemetry = trainingTelemetry(); mode = 'training'; apiReason = error.message || 'unavailable';
     scheduleRefresh(error.retryAfter || 20);
   }
+  clearTimeout(timeout);
   render();
 }
 

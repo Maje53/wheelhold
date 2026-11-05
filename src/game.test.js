@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INITIAL_STATE, activityTier, normalizeCore, normalizeTelemetry, resolveRound, settlementResult } from './game.js';
+import { INITIAL_STATE, activityTier, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult } from './game.js';
 
 const statusFixture = {
   schemaVersion: 1,
@@ -33,11 +33,14 @@ test('uses deterministic work tiers at boundaries', () => {
   assert.equal(activityTier({ workUnits: '-1' }), 'unverified');
 });
 
-test('treats a newly settled round without RoundRecorded as zero but expires old gaps', () => {
+test('requires affirmative batch evidence before treating a missing RoundRecorded event as zero', () => {
   const core = { available: true, settledThroughRound: '350', rounds: [] };
-  assert.equal(settlementResult(core, '350').workUnits, '0');
+  assert.equal(settlementResult(core, '350').expired, true);
   assert.equal(settlementResult(core, '351'), null);
-  assert.equal(settlementResult({ ...core, settledThroughRound: '366' }, '350').expired, true);
+  const status = { settlementQueue: { latestSubmission: { lifecycle: 'confirmed', previousSettledThroughRound: '348', settledThroughRound: '350', activeRoundCount: '0', transactionHash: '0xzero' } } };
+  const zeroRange = confirmedZeroRange(status);
+  assert.deepEqual(zeroRange, { fromRound: '349', toRound: '350', transactionHash: '0xzero' });
+  assert.equal(settlementResult(core, '350', zeroRange).workUnits, '0');
 });
 
 test('resolves only a confirmed round and cannot score it twice', () => {

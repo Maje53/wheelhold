@@ -43,6 +43,7 @@ export function normalizeTelemetry(payload, now = Date.now()) {
     blockHeight: String(anchor.blockHeight ?? '—'),
     blockProgress: Math.min(1, Math.max(0, Number(anchor.blockProgress ?? 0) / 1e9)),
     observedAt: Number.isFinite(observed) ? new Date(observed).toISOString() : null,
+    staleAt: Number.isFinite(observed) ? observed + Number(measurement.staleAfterSeconds ?? 120) * 1000 : 0,
     stale: measurement.freshness !== 'online' || ageMs === null || ageMs > Number(measurement.staleAfterSeconds ?? 120) * 1000,
     verified: measurement.provenance === 'hardware' && payload.oracle?.state === 'accepted' && payload.builder?.status === 'available',
     spinning: coreStatus === 'ACTIVE'
@@ -59,15 +60,26 @@ export function normalizeCore(payload) {
   return { available: true, settledThroughRound: String(payload.core?.settledThroughRound ?? ''), blockHeight: String(payload.core?.blockHeight ?? ''), rounds };
 }
 
-export function settlementResult(core, pendingRound, maxBatchRounds = 16n) {
+export function confirmedZeroRange(statusPayload) {
+  const submission = statusPayload?.settlementQueue?.latestSubmission;
+  if (!submission || submission.lifecycle !== 'confirmed' || String(submission.activeRoundCount) !== '0') return null;
+  const from = submission.previousSettledThroughRound;
+  const to = submission.settledThroughRound;
+  if (!/^\d+$/.test(String(from)) || !/^\d+$/.test(String(to))) return null;
+  return { fromRound: (BigInt(from) + 1n).toString(), toRound: String(to), transactionHash: submission.transactionHash || null };
+}
+
+export function settlementResult(core, pendingRound, zeroRange = null) {
   if (!core?.available || !/^\d+$/.test(String(pendingRound)) || !/^\d+$/.test(String(core.settledThroughRound))) return null;
   const exact = core.rounds.find(r => r.roundId === String(pendingRound));
   if (exact) return exact;
   const settled = BigInt(core.settledThroughRound);
   const pending = BigInt(pendingRound);
   if (settled < pending) return null;
-  if (settled - pending >= maxBatchRounds) return { expired: true, roundId: String(pendingRound) };
-  return { roundId: String(pendingRound), workUnits: '0', transactionHash: null, blockNumber: null };
+  if (zeroRange && pending >= BigInt(zeroRange.fromRound) && pending <= BigInt(zeroRange.toRound)) {
+    return { roundId: String(pendingRound), workUnits: '0', transactionHash: zeroRange.transactionHash, blockNumber: null };
+  }
+  return { expired: true, roundId: String(pendingRound), reason: 'missing_round_evidence' };
 }
 
 export function activityTier(result) {

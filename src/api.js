@@ -2,7 +2,7 @@ const BASE = 'https://api.squeekchain.com/v1';
 const cache = new Map();
 
 export async function apiGet(path, { signal } = {}) {
-  const headers = { 'X-Request-Id': `squeek-colony-${crypto.randomUUID()}` };
+  const headers = { 'X-Request-Id': `wheelhold-${crypto.randomUUID()}` };
   const cached = cache.get(path);
   if (cached?.etag) headers['If-None-Match'] = cached.etag;
   const response = await fetch(`${BASE}${path}`, { headers, signal, cache: 'no-cache' });

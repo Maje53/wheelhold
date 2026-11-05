@@ -1,6 +1,6 @@
-# Squeek Colony
+# Wheelhold — A Squeekchain Colony
 
-A persistent colony strategy game whose verified round outcomes are powered by Squeektoshi's real WHEELY9000 activity. This build is a personal colony, not yet a server-authoritative multiplayer world.
+A persistent colony strategy game whose verified round outcomes are powered by Squeektoshi's real WHEELY9000 activity. Wheelhold was previously developed under the working title Squeek Colony; the distinct product name avoids confusion with another independently published build. This build is a personal colony, not yet a server-authoritative multiplayer world.
 
 ## Run
 

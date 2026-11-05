@@ -1,5 +1,6 @@
 {
-  "name": "squeek-colony",
+  "name": "wheelhold",
+  "description": "A strategy game powered by verified Squeekchain rounds.",
   "private": true,
   "version": "0.1.0",
   "type": "module",
