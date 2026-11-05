@@ -13,6 +13,8 @@
 
 ## Before verification
 
+Operational blocker observed on 2026-11-05: the public status endpoint reported `settlementQueue.state = disabled` and `settlementEnabled = false`. Wheelhold now disables new locks in that state. Do not request Genesis review until settlement is enabled and the production active/zero-round checks below pass.
+
 - [x] Start the first production build/deploy job through IMD using the wallet verified on the builder's Genesis profile
 - [x] Record the first job: https://explorer.imd.fun/jobs/10243a89-33c6-4399-a3b2-85890e3ddc68
 - [x] Link the IMD job from the production footer

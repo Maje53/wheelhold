@@ -11,13 +11,14 @@ npm run dev
 
 ## Integrity rules
 
-- Action locking requires fresh hardware telemetry accepted by the Oracle.
+- Action locking requires fresh hardware telemetry accepted by the Oracle, an unpaused core and an available settlement pipeline.
+- The open round is derived from the canonical genesis timestamp and duration; a lock is rejected exactly at the round boundary.
 - Resolution uses confirmed `RoundRecorded` work from `/v1/core`, not a guessed RPM snapshot.
 - `unavailable`, stale and unknown data never become zero activity.
 - Training simulation is visually labelled and never resolves or rewards a live round.
 - Processed round IDs are stored and cannot score twice.
 - Large chain values remain strings; no unsafe floating-point parsing.
-- Missing evidence outside the latest settlement window expires without scoring.
+- A missing active-event record is treated as zero only when the latest confirmed submission's complete active set is present; incomplete evidence expires without scoring.
 
 ## Quality checks
 
