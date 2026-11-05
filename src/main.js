@@ -1,5 +1,5 @@
 import './style.css';
-import { ACTIONS, INITIAL_STATE, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, trainingTelemetry } from './game.js';
+import { ACTIONS, INITIAL_STATE, canLockRound, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, telemetryPresentation, trainingTelemetry } from './game.js';
 import { getSnapshot } from './api.js';
 
 const STORE = 'wheelhold-v1';
@@ -32,8 +32,8 @@ function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
 const pct = n => `${Math.round(n)}%`;
 const short = v => String(v).length > 10 ? `${String(v).slice(0, 6)}…${String(v).slice(-3)}` : v;
 
-function hamster() {
-  return `<div class="habitat ${telemetry?.spinning ? 'awake' : ''}">
+function hamster(animate) {
+  return `<div class="habitat ${animate ? 'awake' : ''}">
     <div class="stars">· ✦ · · ✧ · ✦</div><div class="moon"></div>
     <div class="hill h1"></div><div class="hill h2"></div>
     <div class="burrow"><i></i><i></i><i></i></div>
@@ -47,6 +47,7 @@ function render() {
   const t = telemetry || trainingTelemetry();
   const live = mode === 'live' && t.verified;
   const untrusted = mode === 'live' && !t.verified;
+  const presentation = telemetryPresentation(mode, t);
   const statusLabel = mode === 'connecting' ? 'CONNECTING' : live ? (t.stale ? 'STALE SIGNAL' : 'LIVE WHEELY9000') : untrusted ? `${String(t.provenance).toUpperCase()} DATA — NOT LIVE` : 'TRAINING MODE';
   app.innerHTML = `
     <a class="skip" href="#game">Skip to game</a>
@@ -61,10 +62,10 @@ function render() {
         <p>One real hamster. Your living colony. Choose a move before the current Squeekchain round settles.</p>
       </section>
       <section class="world-card">
-        ${hamster()}
+        ${hamster(presentation.animate)}
         <div class="telemetry">
-          <div><small>WHEEL STATE</small><strong>${t.spinning ? 'RUNNING' : 'RESTING'}</strong></div>
-          <div><small>LIVE SPEED</small><strong>${t.rpm.toFixed(1)} <sup>RPM</sup></strong></div>
+          <div><small>WHEEL STATE</small><strong>${presentation.state}</strong></div>
+          <div><small>${presentation.speedLabel}</small><strong>${t.rpm.toFixed(1)} <sup>RPM</sup></strong></div>
           <div><small>SQUEEK BLOCK</small><strong>#${short(t.blockHeight)}</strong></div>
           <div class="progress"><small>BLOCK PROGRESS</small><strong>${pct(t.blockProgress * 100)}</strong><progress max="100" value="${t.blockProgress * 100}" aria-label="Block progress"></progress></div>
         </div>
@@ -102,10 +103,11 @@ function bind() {
   document.querySelectorAll('[data-action]').forEach(el => el.onclick = () => { state.pendingAction = el.dataset.action; save(); render(); });
   document.querySelector('#commit').onclick = () => {
     if (!state.pendingAction) return;
-    if (mode !== 'live') return toast('Training action saved. Live resolution requires verified telemetry.');
-    if (telemetry.stale || Date.now() >= telemetry.staleAt || !telemetry.verified) return toast('Resolution paused: telemetry is not fresh and hardware-verified.');
-    if (!telemetry.roundId) return toast('The current round cannot be verified yet. Try again after the next refresh.');
-    if (state.resolvedRounds.includes(telemetry.roundId)) return toast('That round is already resolved. Waiting for the next verified round.');
+    const eligibility = canLockRound(mode, telemetry, state.resolvedRounds);
+    if (!eligibility.ok && eligibility.reason === 'unverified') return toast('Training action saved. Live resolution requires verified telemetry.');
+    if (!eligibility.ok && eligibility.reason === 'stale') return toast('Resolution paused: telemetry is not fresh and hardware-verified.');
+    if (!eligibility.ok && eligibility.reason === 'round') return toast('The current round cannot be verified yet. Try again after the next refresh.');
+    if (!eligibility.ok && eligibility.reason === 'resolved') return toast('That round is already resolved. Waiting for the next verified round.');
     state.pendingRound = telemetry.roundId;
     state.pendingSnapshot = { counterEpoch: telemetry.counterEpoch, cumulativeWorkUnits: telemetry.cumulativeWorkUnits, lockedAt: new Date().toISOString() };
     save(); render();
@@ -127,10 +129,11 @@ function scheduleRefresh(seconds = 15) {
 
 async function refresh() {
   refreshController?.abort();
-  refreshController = new AbortController();
-  const timeout = setTimeout(() => refreshController.abort(), 8000);
+  const controller = new AbortController();
+  refreshController = controller;
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const raw = await getSnapshot(refreshController.signal);
+    const raw = await getSnapshot(controller.signal);
     const next = normalizeTelemetry(raw.status);
     const core = normalizeCore(raw.core);
     if (!next.available) throw new Error(next.reason);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INITIAL_STATE, activityTier, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult } from './game.js';
+import { INITIAL_STATE, activityTier, canLockRound, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, telemetryPresentation } from './game.js';
 
 const statusFixture = {
   schemaVersion: 1,
@@ -20,6 +20,25 @@ test('rejects unsupported, stale and simulated telemetry', () => {
   const simulated = structuredClone(statusFixture); simulated.measurement.provenance = 'simulated';
   assert.equal(normalizeTelemetry(simulated, Date.parse('2026-11-04T10:00:30Z')).verified, false);
   assert.equal(normalizeTelemetry(statusFixture, Date.parse('2026-11-04T10:03:00Z')).stale, true);
+  const malformed = structuredClone(statusFixture); malformed.measurement.staleAfterSeconds = 'not-a-number';
+  assert.equal(normalizeTelemetry(malformed, Date.parse('2026-11-04T10:02:00Z')).stale, true);
+});
+
+test('never presents simulated or unverified readings as live hardware', () => {
+  const t = normalizeTelemetry({ ...statusFixture, measurement: { ...statusFixture.measurement, provenance: 'simulated' } }, Date.parse('2026-11-04T10:00:30Z'));
+  const display = telemetryPresentation('live', t);
+  assert.deepEqual(display, { trusted: false, fresh: false, animate: false, state: 'UNVERIFIED', speedLabel: 'OBSERVED SPEED' });
+  const stale = telemetryPresentation('live', { ...t, verified: true, stale: true, staleAt: 0 });
+  assert.deepEqual(stale, { trusted: true, fresh: false, animate: false, state: 'SIGNAL STALE', speedLabel: 'LAST VERIFIED SPEED' });
+});
+
+test('lock eligibility fails closed for stale, invalid and already resolved rounds', () => {
+  const base = { verified: true, stale: false, staleAt: 2000, roundId: '347' };
+  assert.equal(canLockRound('live', base, [], 1999).ok, true);
+  assert.equal(canLockRound('live', base, [], 2000).reason, 'stale');
+  assert.equal(canLockRound('live', { ...base, roundId: null }, [], 1000).reason, 'round');
+  assert.equal(canLockRound('live', base, ['347'], 1000).reason, 'resolved');
+  assert.equal(canLockRound('training', base, [], 1000).reason, 'unverified');
 });
 
 test('extracts exact work from confirmed RoundRecorded events', () => {

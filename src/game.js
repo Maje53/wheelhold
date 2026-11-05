@@ -24,6 +24,8 @@ export function normalizeTelemetry(payload, now = Date.now()) {
   const anchor = payload.builder?.projected || payload.builder?.anchor || {};
   const observed = Date.parse(measurement.observedAt || payload.observedAt || '');
   const ageMs = Number.isFinite(observed) ? Math.max(0, now - observed) : null;
+  const configuredFreshness = Number(measurement.staleAfterSeconds);
+  const staleAfterSeconds = Number.isFinite(configuredFreshness) && configuredFreshness > 0 ? configuredFreshness : 120;
   const coreStatus = String(measurement.coreStatus || 'UNKNOWN').toUpperCase();
   const rpm = Number(measurement.rpmMilli ?? 0) / 1000;
   const lastClosedRound = payload.oracle?.latestClosure?.lastRound ?? payload.builder?.anchor?.settledThroughRound ?? null;
@@ -43,11 +45,31 @@ export function normalizeTelemetry(payload, now = Date.now()) {
     blockHeight: String(anchor.blockHeight ?? '—'),
     blockProgress: Math.min(1, Math.max(0, Number(anchor.blockProgress ?? 0) / 1e9)),
     observedAt: Number.isFinite(observed) ? new Date(observed).toISOString() : null,
-    staleAt: Number.isFinite(observed) ? observed + Number(measurement.staleAfterSeconds ?? 120) * 1000 : 0,
-    stale: measurement.freshness !== 'online' || ageMs === null || ageMs > Number(measurement.staleAfterSeconds ?? 120) * 1000,
+    staleAt: Number.isFinite(observed) ? observed + staleAfterSeconds * 1000 : 0,
+    stale: measurement.freshness !== 'online' || ageMs === null || ageMs >= staleAfterSeconds * 1000,
     verified: measurement.provenance === 'hardware' && payload.oracle?.state === 'accepted' && payload.builder?.status === 'available',
     spinning: coreStatus === 'ACTIVE'
   };
+}
+
+export function telemetryPresentation(mode, telemetry) {
+  const trusted = mode === 'live' && telemetry?.verified === true;
+  const fresh = trusted && telemetry?.stale === false && Number.isFinite(telemetry?.staleAt) && Date.now() < telemetry.staleAt;
+  return {
+    trusted,
+    fresh,
+    animate: fresh && telemetry.spinning === true,
+    state: !trusted ? 'UNVERIFIED' : fresh ? (telemetry.spinning ? 'RUNNING' : 'RESTING') : 'SIGNAL STALE',
+    speedLabel: !trusted ? 'OBSERVED SPEED' : fresh ? 'LIVE SPEED' : 'LAST VERIFIED SPEED'
+  };
+}
+
+export function canLockRound(mode, telemetry, resolvedRounds = [], now = Date.now()) {
+  if (mode !== 'live' || !telemetry?.verified) return { ok: false, reason: 'unverified' };
+  if (telemetry.stale || !Number.isFinite(telemetry.staleAt) || now >= telemetry.staleAt) return { ok: false, reason: 'stale' };
+  if (!/^\d+$/.test(String(telemetry.roundId || ''))) return { ok: false, reason: 'round' };
+  if (resolvedRounds.includes(String(telemetry.roundId))) return { ok: false, reason: 'resolved' };
+  return { ok: true };
 }
 
 export function normalizeCore(payload) {
