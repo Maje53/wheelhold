@@ -28,4 +28,4 @@ npm run build
 
 See [SUBMISSION.md](./SUBMISSION.md) for the Genesis verification checklist and [SECURITY.md](./SECURITY.md) for the trust model.
 
-This prototype reads `GET https://api.squeekchain.com/v1/status`. It does not claim Genesis approval. Before Genesis submission, its first production build/deploy job must be purchased through IMD from the wallet verified on the builder's Genesis profile.
+This prototype reads `GET https://api.squeekchain.com/v1/status` and `/v1/core`. It does not claim Genesis approval. Its first IMD production job is recorded in [SUBMISSION.md](./SUBMISSION.md); the renamed, hardened commit still needs to be published through that job's paid continuation before Genesis review.

@@ -1,5 +1,5 @@
 import './style.css';
-import { ACTIONS, INITIAL_STATE, canLockRound, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, telemetryPresentation, trainingTelemetry } from './game.js';
+import { ACTIONS, canLockRound, confirmedZeroRange, hydrateState, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, telemetryPresentation, trainingTelemetry } from './game.js';
 import { getSnapshot } from './api.js';
 
 const STORE = 'wheelhold-v1';
@@ -11,26 +11,19 @@ let mode = 'connecting';
 let refreshTimer = null;
 let refreshController = null;
 let apiReason = null;
+let connectedAccount = null;
 
 function load() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORE) || localStorage.getItem(LEGACY_STORE) || '{}');
-    const next = structuredClone(INITIAL_STATE);
-    if (stored && typeof stored === 'object') {
-      if (Array.isArray(stored.resolvedRounds)) next.resolvedRounds = stored.resolvedRounds.filter(v => /^\d+$/.test(String(v))).slice(-100);
-      if (ACTIONS[stored.pendingAction]) next.pendingAction = stored.pendingAction;
-      if (/^\d+$/.test(String(stored.pendingRound || ''))) next.pendingRound = String(stored.pendingRound);
-      if (stored.resources && typeof stored.resources === 'object') for (const k of Object.keys(next.resources)) if (Number.isFinite(stored.resources[k])) next.resources[k] = Math.max(0, stored.resources[k]);
-      if (stored.colony && typeof stored.colony === 'object') for (const k of Object.keys(next.colony)) if (Number.isFinite(stored.colony[k])) next.colony[k] = Math.min(100, Math.max(0, stored.colony[k]));
-      if (Array.isArray(stored.history)) next.history = stored.history.filter(h => h && ACTIONS[h.actionId] && /^\d+$/.test(String(h.roundId))).slice(0,12);
-    }
-    return next;
+    return hydrateState(stored);
   }
-  catch { return structuredClone(INITIAL_STATE); }
+  catch { return hydrateState(null); }
 }
-function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
+function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* gameplay remains available without persistence */ } }
 const pct = n => `${Math.round(n)}%`;
 const short = v => String(v).length > 10 ? `${String(v).slice(0, 6)}…${String(v).slice(-3)}` : v;
+const esc = value => String(value).replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
 
 function hamster(animate) {
   return `<div class="habitat ${animate ? 'awake' : ''}">
@@ -53,11 +46,11 @@ function render() {
     <a class="skip" href="#game">Skip to game</a>
     <header><a class="brand" href="#" aria-label="Wheelhold home"><span>WH</span><div>WHEEL<br><b>HOLD</b></div></a>
       <div class="season">SEASON 01 <i></i> DAY ${Math.max(1, state.history.length + 1)}</div>
-      <button class="wallet" id="wallet" aria-label="Connect wallet">CONNECT WALLET <span>↗</span></button>
+      <button class="wallet" id="wallet" aria-label="Connect wallet">${connectedAccount ? `${connectedAccount.slice(0,6)}…${connectedAccount.slice(-4)} <span>✓</span>` : 'CONNECT WALLET <span>↗</span>'}</button>
     </header>
     <main id="game">
       <section class="hero">
-        <div class="eyebrow"><i class="pulse ${live && !t.stale ? 'on' : ''}"></i>${statusLabel}</div>
+        <div class="eyebrow"><i class="pulse ${live && !t.stale ? 'on' : ''}"></i>${esc(statusLabel)}</div>
         <h1>THE WHEEL<br><em>WRITES OUR FATE.</em></h1>
         <p>One real hamster. Your living colony. Choose a move before the current Squeekchain round settles.</p>
       </section>
@@ -66,10 +59,10 @@ function render() {
         <div class="telemetry">
           <div><small>WHEEL STATE</small><strong>${presentation.state}</strong></div>
           <div><small>${presentation.speedLabel}</small><strong>${t.rpm.toFixed(1)} <sup>RPM</sup></strong></div>
-          <div><small>SQUEEK BLOCK</small><strong>#${short(t.blockHeight)}</strong></div>
+          <div><small>SQUEEK BLOCK</small><strong>#${esc(short(t.blockHeight))}</strong></div>
           <div class="progress"><small>BLOCK PROGRESS</small><strong>${pct(t.blockProgress * 100)}</strong><progress max="100" value="${t.blockProgress * 100}" aria-label="Block progress"></progress></div>
         </div>
-        ${untrusted ? `<div class="notice warning"><b>UNTRUSTED TELEMETRY</b> — ${String(t.provenance).toUpperCase()} readings cannot lock or resolve a round.</div>` : !live ? `<div class="notice"><b>TRAINING SIMULATION</b> — No rewards or live round resolution. ${apiReason ? `Live API: ${apiReason}. ` : ''}Simulated telemetry is never presented as chain data.</div>` : t.stale ? `<div class="notice warning"><b>STALE TELEMETRY</b> — Actions are saved, but resolution is paused until verified data returns.</div>` : ''}
+        ${untrusted ? `<div class="notice warning"><b>UNTRUSTED TELEMETRY</b> — ${esc(String(t.provenance).toUpperCase())} readings cannot lock or resolve a round.</div>` : !live ? `<div class="notice"><b>TRAINING SIMULATION</b> — No rewards or live round resolution. ${apiReason ? `Live API: ${esc(apiReason)}. ` : ''}Simulated telemetry is never presented as chain data.</div>` : t.stale ? `<div class="notice warning"><b>STALE TELEMETRY</b> — Actions are saved, but resolution is paused until verified data returns.</div>` : ''}
       </section>
       <section class="dashboard">
         <div class="panel colony">
@@ -89,10 +82,10 @@ function render() {
       </section>
       <section class="chronicle">
         <div class="panel-title"><span>03</span><h2>COLONY CHRONICLE</h2><small>${state.history.length} VERIFIED EVENTS</small></div>
-        ${state.history.length ? state.history.slice(0,4).map(h=>`<article><i>${ACTIONS[h.actionId].icon}</i><div><b>${h.result}</b><small>ROUND ${h.roundId} · ${h.workUnits ?? '—'} WORK · ${h.tier.toUpperCase()} ${h.transactionHash ? `· <a href="https://eth-sepolia.blockscout.com/tx/${h.transactionHash}" target="_blank" rel="noopener">PROOF ↗</a>` : ''}</small></div></article>`).join('') : '<div class="empty">Your colony’s verified story begins with the next settled round.</div>'}
+        ${state.history.length ? state.history.slice(0,4).map(h=>`<article><i>${ACTIONS[h.actionId].icon}</i><div><b>${esc(h.result)}</b><small>ROUND ${esc(h.roundId)} · ${esc(h.workUnits ?? '—')} WORK · ${esc(h.tier.toUpperCase())} ${h.transactionHash ? `· <a href="https://eth-sepolia.blockscout.com/tx/${h.transactionHash}" target="_blank" rel="noopener">PROOF ↗</a>` : ''}</small></div></article>`).join('') : '<div class="empty">Your colony’s verified story begins with the next settled round.</div>'}
       </section>
     </main>
-    <footer><span>WHEELHOLD / A SQUEEKCHAIN COLONY</span><span>POWERED BY VERIFIED SQUEEKCHAIN DATA · SEPOLIA</span><a href="https://squeekchain.com" target="_blank" rel="noopener">SQUEEKCHAIN ↗</a></footer>`;
+    <footer><span>WHEELHOLD / A SQUEEKCHAIN COLONY</span><span>POWERED BY VERIFIED SQUEEKCHAIN DATA · SEPOLIA</span><a href="https://explorer.imd.fun/jobs/10243a89-33c6-4399-a3b2-85890e3ddc68" target="_blank" rel="noopener">IMD BUILD ↗</a><a href="https://squeekchain.com" target="_blank" rel="noopener">SQUEEKCHAIN ↗</a></footer>`;
   bind();
   if (focused) requestAnimationFrame(() => (document.getElementById(focused) || document.querySelector(`[data-action="${CSS.escape(focused)}"]`))?.focus({ preventScroll: true }));
 }
@@ -115,7 +108,11 @@ function bind() {
   };
   document.querySelector('#wallet').onclick = async () => {
     if (!window.ethereum) return toast('No wallet detected. Guest play remains fully available.');
-    try { const [a] = await window.ethereum.request({ method:'eth_requestAccounts' }); document.querySelector('#wallet').innerHTML = `${a.slice(0,6)}…${a.slice(-4)} <span>✓</span>`; }
+    try {
+      const [account] = await window.ethereum.request({ method:'eth_requestAccounts' });
+      if (!/^0x[0-9a-f]{40}$/i.test(String(account))) throw new Error('invalid_account');
+      connectedAccount = String(account); render();
+    }
     catch { toast('Wallet connection was cancelled.'); }
   };
 }
@@ -134,6 +131,7 @@ async function refresh() {
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const raw = await getSnapshot(controller.signal);
+    if (controller !== refreshController) { clearTimeout(timeout); return; }
     const next = normalizeTelemetry(raw.status);
     const core = normalizeCore(raw.core);
     if (!next.available) throw new Error(next.reason);
@@ -151,6 +149,7 @@ async function refresh() {
     }
     scheduleRefresh(15);
   } catch (error) {
+    if (controller !== refreshController) { clearTimeout(timeout); return; }
     telemetry = trainingTelemetry(); mode = 'training'; apiReason = error.message || 'unavailable';
     scheduleRefresh(error.retryAfter || 20);
   }

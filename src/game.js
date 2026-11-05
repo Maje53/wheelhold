@@ -16,6 +16,31 @@ export const INITIAL_STATE = {
   history: []
 };
 
+export function hydrateState(stored) {
+  const next = structuredClone(INITIAL_STATE);
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return next;
+  if (Array.isArray(stored.resolvedRounds)) {
+    next.resolvedRounds = [...new Set(stored.resolvedRounds.map(String).filter(v => /^\d+$/.test(v)))].slice(-100);
+  }
+  if (ACTIONS[stored.pendingAction]) next.pendingAction = stored.pendingAction;
+  const pendingRound = String(stored.pendingRound ?? '');
+  if (next.pendingAction && /^\d+$/.test(pendingRound) && !next.resolvedRounds.includes(pendingRound)) next.pendingRound = pendingRound;
+  if (stored.resources && typeof stored.resources === 'object') {
+    for (const k of Object.keys(next.resources)) if (Number.isFinite(stored.resources[k])) next.resources[k] = clamp(stored.resources[k]);
+  }
+  if (stored.colony && typeof stored.colony === 'object') {
+    for (const k of Object.keys(next.colony)) if (Number.isFinite(stored.colony[k])) next.colony[k] = clamp(stored.colony[k], 0, 100);
+  }
+  if (Array.isArray(stored.history)) {
+    next.history = stored.history.flatMap(h => {
+      if (!h || !ACTIONS[h.actionId] || !/^\d+$/.test(String(h.roundId)) || !/^(rest|jog|zoom)$/.test(String(h.tier)) || !/^\d+$/.test(String(h.workUnits))) return [];
+      const transactionHash = /^0x[0-9a-f]{64}$/i.test(String(h.transactionHash)) ? String(h.transactionHash) : null;
+      return [{ roundId: String(h.roundId), actionId: h.actionId, tier: h.tier, workUnits: String(h.workUnits), transactionHash, result: String(h.result || '').slice(0, 180), at: String(h.at || '') }];
+    }).slice(0, 12);
+  }
+  return next;
+}
+
 export function normalizeTelemetry(payload, now = Date.now()) {
   if (!payload || payload.status === 'unavailable') return { available: false, reason: payload?.reason || 'unavailable' };
   if (payload.schemaVersion !== 1) return { available: false, reason: 'unsupported_schema' };
@@ -77,18 +102,20 @@ export function normalizeCore(payload) {
   if (payload.schemaVersion !== 1) return { available: false, reason: 'unsupported_schema', rounds: [] };
   const rounds = (payload.events || []).filter(e => e.eventName === 'RoundRecorded').map(e => {
     const args = Object.fromEntries((e.arguments || []).map(a => [a.name, a.value]));
-    return { roundId: String(args.roundId ?? ''), workUnits: String(args.work ?? ''), transactionHash: e.transactionHash || null, blockNumber: String(e.blockNumber ?? '') };
+    const transactionHash = /^0x[0-9a-f]{64}$/i.test(String(e.transactionHash)) ? String(e.transactionHash) : null;
+    return { roundId: String(args.roundId ?? ''), workUnits: String(args.work ?? ''), transactionHash, blockNumber: String(e.blockNumber ?? '') };
   }).filter(r => /^\d+$/.test(r.roundId) && /^\d+$/.test(r.workUnits));
   return { available: true, settledThroughRound: String(payload.core?.settledThroughRound ?? ''), blockHeight: String(payload.core?.blockHeight ?? ''), rounds };
 }
 
 export function confirmedZeroRange(statusPayload) {
   const submission = statusPayload?.settlementQueue?.latestSubmission;
-  if (!submission || submission.lifecycle !== 'confirmed' || String(submission.activeRoundCount) !== '0') return null;
+  if (!submission || submission.lifecycle !== 'confirmed') return null;
   const from = submission.previousSettledThroughRound;
   const to = submission.settledThroughRound;
-  if (!/^\d+$/.test(String(from)) || !/^\d+$/.test(String(to))) return null;
-  return { fromRound: (BigInt(from) + 1n).toString(), toRound: String(to), transactionHash: submission.transactionHash || null };
+  if (!/^\d+$/.test(String(from)) || !/^\d+$/.test(String(to)) || BigInt(to) <= BigInt(from)) return null;
+  const transactionHash = /^0x[0-9a-f]{64}$/i.test(String(submission.transactionHash)) ? String(submission.transactionHash) : null;
+  return { fromRound: (BigInt(from) + 1n).toString(), toRound: String(to), transactionHash };
 }
 
 export function settlementResult(core, pendingRound, zeroRange = null) {
@@ -98,7 +125,9 @@ export function settlementResult(core, pendingRound, zeroRange = null) {
   const settled = BigInt(core.settledThroughRound);
   const pending = BigInt(pendingRound);
   if (settled < pending) return null;
-  if (zeroRange && pending >= BigInt(zeroRange.fromRound) && pending <= BigInt(zeroRange.toRound)) {
+  const zeroFrom = String(zeroRange?.fromRound ?? '');
+  const zeroTo = String(zeroRange?.toRound ?? '');
+  if (/^\d+$/.test(zeroFrom) && /^\d+$/.test(zeroTo) && pending >= BigInt(zeroFrom) && pending <= BigInt(zeroTo)) {
     return { roundId: String(pendingRound), workUnits: '0', transactionHash: zeroRange.transactionHash, blockNumber: null };
   }
   return { expired: true, roundId: String(pendingRound), reason: 'missing_round_evidence' };
@@ -112,7 +141,7 @@ export function activityTier(result) {
   return 'zoom';
 }
 
-const clamp = (n, min = 0, max = 999) => Math.min(max, Math.max(min, n));
+function clamp(n, min = 0, max = 999) { return Math.min(max, Math.max(min, n)); }
 
 export function resolveRound(state, actionId, roundResult) {
   if (!ACTIONS[actionId]) throw new Error('Unknown action');

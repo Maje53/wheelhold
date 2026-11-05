@@ -9,7 +9,8 @@ export async function apiGet(path, { signal } = {}) {
   if (response.status === 304 && cached) return cached.data;
   if (response.status === 429 || response.status === 503) {
     const error = new Error(`API busy (${response.status})`);
-    error.retryAfter = Math.min(60, Number(response.headers.get('Retry-After') || 5));
+    const requestedDelay = Number(response.headers.get('Retry-After'));
+    error.retryAfter = Number.isFinite(requestedDelay) && requestedDelay > 0 ? Math.min(60, requestedDelay) : 5;
     throw error;
   }
   if (!response.ok) throw new Error(`Squeekchain API HTTP ${response.status}`);

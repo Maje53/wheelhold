@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INITIAL_STATE, activityTier, canLockRound, confirmedZeroRange, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, telemetryPresentation } from './game.js';
+import { INITIAL_STATE, activityTier, canLockRound, confirmedZeroRange, hydrateState, normalizeCore, normalizeTelemetry, resolveRound, settlementResult, telemetryPresentation } from './game.js';
 
 const statusFixture = {
   schemaVersion: 1,
@@ -42,8 +42,19 @@ test('lock eligibility fails closed for stale, invalid and already resolved roun
 });
 
 test('extracts exact work from confirmed RoundRecorded events', () => {
-  const core = normalizeCore({ schemaVersion: 1, status: 'available', core: { settledThroughRound: '346', blockHeight: '2366' }, events: [{ eventName: 'RoundRecorded', transactionHash: '0xabc', blockNumber: '12', arguments: [{ name: 'roundId', value: '346' }, { name: 'work', value: '609' }] }] });
-  assert.deepEqual(core.rounds[0], { roundId: '346', workUnits: '609', transactionHash: '0xabc', blockNumber: '12' });
+  const hash = `0x${'a'.repeat(64)}`;
+  const core = normalizeCore({ schemaVersion: 1, status: 'available', core: { settledThroughRound: '346', blockHeight: '2366' }, events: [{ eventName: 'RoundRecorded', transactionHash: hash, blockNumber: '12', arguments: [{ name: 'roundId', value: '346' }, { name: 'work', value: '609' }] }] });
+  assert.deepEqual(core.rounds[0], { roundId: '346', workUnits: '609', transactionHash: hash, blockNumber: '12' });
+});
+
+test('repairs legacy state invariants and normalizes numeric round IDs', () => {
+  const repaired = hydrateState({ resolvedRounds: [346, '346', 'bad'], pendingRound: '347', resources: { grain: 1e9 }, history: [{ actionId: 'raid', roundId: '346', tier: '<script>', workUnits: '1', result: '<img>' }] });
+  assert.deepEqual(repaired.resolvedRounds, ['346']);
+  assert.equal(repaired.pendingRound, null);
+  assert.equal(repaired.resources.grain, 999);
+  assert.deepEqual(repaired.history, []);
+  const valid = hydrateState({ pendingAction: 'forage', pendingRound: 347 });
+  assert.equal(valid.pendingRound, '347');
 });
 
 test('uses deterministic work tiers at boundaries', () => {
@@ -56,10 +67,15 @@ test('requires affirmative batch evidence before treating a missing RoundRecorde
   const core = { available: true, settledThroughRound: '350', rounds: [] };
   assert.equal(settlementResult(core, '350').expired, true);
   assert.equal(settlementResult(core, '351'), null);
-  const status = { settlementQueue: { latestSubmission: { lifecycle: 'confirmed', previousSettledThroughRound: '348', settledThroughRound: '350', activeRoundCount: '0', transactionHash: '0xzero' } } };
+  const hash = `0x${'b'.repeat(64)}`;
+  const status = { settlementQueue: { latestSubmission: { lifecycle: 'confirmed', previousSettledThroughRound: '348', settledThroughRound: '350', activeRoundCount: '1', transactionHash: hash } } };
   const zeroRange = confirmedZeroRange(status);
-  assert.deepEqual(zeroRange, { fromRound: '349', toRound: '350', transactionHash: '0xzero' });
+  assert.deepEqual(zeroRange, { fromRound: '349', toRound: '350', transactionHash: hash });
   assert.equal(settlementResult(core, '350', zeroRange).workUnits, '0');
+  const mixedCore = { ...core, rounds: [{ roundId: '349', workUnits: '12', transactionHash: hash }] };
+  assert.equal(settlementResult(mixedCore, '349', zeroRange).workUnits, '12');
+  assert.equal(settlementResult(core, '350', { fromRound: 'bad', toRound: '350' }).expired, true);
+  assert.equal(confirmedZeroRange({ settlementQueue: { latestSubmission: { lifecycle: 'pending', previousSettledThroughRound: '348', settledThroughRound: '350' } } }), null);
 });
 
 test('resolves only a confirmed round and cannot score it twice', () => {

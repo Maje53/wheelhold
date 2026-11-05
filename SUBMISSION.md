@@ -13,8 +13,10 @@
 
 ## Before verification
 
-- [ ] Start the first production build/deploy job through IMD using the wallet verified on the builder's Genesis profile
-- [ ] Add the resulting IMD job URL to this file and the production footer
+- [x] Start the first production build/deploy job through IMD using the wallet verified on the builder's Genesis profile
+- [x] Record the first job: https://explorer.imd.fun/jobs/10243a89-33c6-4399-a3b2-85890e3ddc68
+- [x] Link the IMD job from the production footer
+- [ ] Publish the renamed, hardened commit through the existing job continuation and replace the initial site URL: https://squeek-colony-the-wheel-writes-o.imd.site
 - [ ] Deploy the exact reviewed commit
 - [ ] Test one active and one zero-work round on the production URL
 - [ ] Test current Chrome, Safari and Firefox plus iOS/Android widths
